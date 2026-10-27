@@ -2,19 +2,31 @@ import React, { useState } from 'react';
 import { useData } from '../context/DataContext';
 
 export default function PracticeSection({ onNotify }) {
-  const { questions, addSubmission } = useData();
-  const [openId, setOpenId] = useState(questions[0]?.id || 1);
+  const { questions, addSubmission, submissions, mySubmissionIds, refreshSubmissions, isFirebaseConnected } = useData();
+  const [openId, setOpenId] = useState(questions[0]?.id ?? null);
+  // Câu hỏi đang được trả lời (giữ nguyên kể cả khi đóng accordion)
+  const [selectedId, setSelectedId] = useState(questions[0]?.id ?? null);
   const [studentName, setStudentName] = useState('');
   const [answerText, setAnswerText] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
   const [feedback, setFeedback] = useState(null);
   const [sentToInstructor, setSentToInstructor] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const activeQuestion = questions.find((q) => q.id === openId) || questions[0];
+  const activeQuestion = questions.find((q) => q.id === selectedId) || questions[0];
   const wordsCount = answerText.trim() ? answerText.trim().split(/\s+/).length : 0;
+  const mySubmissions = submissions.filter((s) => mySubmissionIds.includes(s.id));
 
   const toggleAccordion = (id) => {
     setOpenId(openId === id ? null : id);
+    setSelectedId(id);
+  };
+
+  const handleRefreshFeedback = async () => {
+    setRefreshing(true);
+    const ok = await refreshSubmissions();
+    setRefreshing(false);
+    onNotify(ok ? 'Đã cập nhật nhận xét mới nhất từ giảng viên.' : 'Không tải được dữ liệu, vui lòng thử lại.');
   };
 
   const handleStartSession = () => {
@@ -35,30 +47,41 @@ export default function PracticeSection({ onNotify }) {
     setAnalyzing(true);
     setSentToInstructor(false);
 
-    setTimeout(() => {
+    // Chụp lại dữ liệu tại thời điểm bấm gửi
+    const submittedText = answerText.trim();
+    const submittedWords = wordsCount;
+    const submittedTitle = activeQuestion?.title || 'General Question';
+    const submittedName = studentName.trim() || 'Học viên ẩn danh';
+
+    setTimeout(async () => {
       let analysis = '';
-      if (wordsCount < 20) {
+      if (submittedWords < 20) {
         analysis = '💡 Good concise start! However, in an interview, aim for 60-120 words to give the interviewer enough concrete context and measurable results.';
-      } else if (wordsCount < 80) {
+      } else if (submittedWords < 80) {
         analysis = '✨ Strong response structure! You hit key highlights smoothly. To elevate it further, ensure you end with how your strengths solve this team’s specific priorities.';
       } else {
         analysis = '🎯 Excellent depth and detail! Your response shows authentic expertise and solid communication clarity. Consider pausing after your main accomplishment for impact.';
       }
 
       setFeedback(analysis);
-      setAnalyzing(false);
 
       // Tự động lưu bài làm và gửi vào hệ thống cho Admin / Giảng viên chấm
-      addSubmission({
-        studentName: studentName.trim() || 'Học viên ẩn danh',
-        questionTitle: activeQuestion?.title || 'General Question',
-        answerText: answerText.trim(),
-        wordsCount,
+      const synced = await addSubmission({
+        studentName: submittedName,
+        questionTitle: submittedTitle,
+        answerText: submittedText,
+        wordsCount: submittedWords,
         aiFeedback: analysis
       });
 
+      setAnalyzing(false);
+      setAnswerText(''); // tránh bấm gửi trùng cùng một bài
       setSentToInstructor(true);
-      onNotify('Đã phân tích AI và gửi bài làm tới hệ thống đánh giá thành công!');
+      onNotify(
+        isFirebaseConnected && !synced
+          ? '⚠️ Bài làm đã lưu trên máy bạn nhưng chưa gửi được lên hệ thống. Vui lòng thử lại.'
+          : 'Đã phân tích AI và gửi bài làm tới hệ thống đánh giá thành công!'
+      );
     }, 600);
   };
 
@@ -171,6 +194,35 @@ export default function PracticeSection({ onNotify }) {
                 <span className="sparkle">💡</span> Instant feedback on clarity, structure, and tone will be provided, and your response is saved for instructor review.
               </div>
             </div>
+
+            {/* Bài nộp của tôi + nhận xét của giảng viên */}
+            {mySubmissions.length > 0 && (
+              <div className="practice-box" style={{ marginTop: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  <span className="practice-box-title" style={{ margin: 0 }}>📬 Bài nộp của tôi ({mySubmissions.length})</span>
+                  {isFirebaseConnected && (
+                    <button className="btn btn-sm btn-dark" onClick={handleRefreshFeedback} disabled={refreshing}>
+                      {refreshing ? 'Đang tải...' : '🔄 Xem nhận xét mới'}
+                    </button>
+                  )}
+                </div>
+                {mySubmissions.map((s) => (
+                  <div key={s.id} style={{ borderTop: '1px solid #e2e8f0', paddingTop: '12px', marginTop: '12px' }}>
+                    <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                      {s.createdAt} • {s.status === 'Reviewed' ? '✓ Đã có nhận xét' : '⏳ Đang chờ giảng viên nhận xét'}
+                    </div>
+                    <strong style={{ display: 'block', margin: '4px 0' }}>{s.questionTitle}</strong>
+                    <p style={{ fontSize: '0.9rem', margin: '4px 0', fontStyle: 'italic' }}>"{s.answerText}"</p>
+                    {s.adminFeedback && (
+                      <div className="ai-feedback-box" style={{ marginTop: '8px' }}>
+                        <div className="feedback-badge">👨‍🏫 Nhận xét của giảng viên</div>
+                        <p>{s.adminFeedback}</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Right Column: Card with Photo & Practice Tip */}

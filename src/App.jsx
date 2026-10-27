@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { DataProvider, useData } from './context/DataContext';
 import Navbar from './components/Navbar';
 import Hero from './components/Hero';
@@ -18,12 +18,18 @@ function MainContent() {
   const [activeModal, setActiveModal] = useState(null); // 'video' | 'guides' | 'flashcards' | 'cases' | 'quiz' | null
   const { isAdminOpen, setIsAdminOpen } = useData();
 
+  const toastTimerRef = useRef(null);
+
+  // Hủy hẹn giờ cũ để thông báo mới không bị tắt sớm
   const showNotification = (msg) => {
+    clearTimeout(toastTimerRef.current);
     setToastMessage(msg);
-    setTimeout(() => {
+    toastTimerRef.current = setTimeout(() => {
       setToastMessage('');
     }, 3200);
   };
+
+  const closeModal = useCallback(() => setActiveModal(null), []);
 
   return (
     <div className="app-root">
@@ -38,7 +44,7 @@ function MainContent() {
       </main>
       <Footer />
       <Toast message={toastMessage} />
-      <ResourceModal activeModal={activeModal} onClose={() => setActiveModal(null)} />
+      <ResourceModal activeModal={activeModal} onClose={closeModal} />
       {isAdminOpen && <AdminPanel onClose={() => setIsAdminOpen(false)} />}
     </div>
   );

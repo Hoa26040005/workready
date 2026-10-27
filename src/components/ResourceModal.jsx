@@ -2,16 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { useData } from '../context/DataContext';
 
 export default function ResourceModal({ activeModal, onClose }) {
-  if (!activeModal) return null;
-
   // Close on Escape key
+  // (Hook phải được gọi TRƯỚC mọi lệnh return sớm, nếu không React sẽ báo lỗi khi mở popup)
   useEffect(() => {
+    if (!activeModal) return undefined;
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [activeModal, onClose]);
+
+  if (!activeModal) return null;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -52,7 +54,7 @@ function VideoModal() {
   const [activeTab, setActiveTab] = useState('playlist');
 
   const embedUrl = selectedVideo?.videoUrl ? getEmbedVideoUrl(selectedVideo.videoUrl) : null;
-  const isDirectVideo = selectedVideo?.videoUrl && selectedVideo.videoUrl.match(/\.(mp4|webm|ogg)$/i);
+  const isDirectVideo = selectedVideo?.videoUrl && /\.(mp4|webm|ogg)(\?|#|$)/i.test(selectedVideo.videoUrl);
 
   return (
     <div className="modal-content">
@@ -205,7 +207,7 @@ function GuidesModal() {
   };
 
   const handleDownload = (filename) => {
-    const blob = new Blob([`WorkReady Official Resource: ${filename}\n\nContents verified by WorkReady Career Mentors.\nVisit http://localhost:5173 for full mock drills.`], { type: 'text/plain;charset=utf-8' });
+    const blob = new Blob([`WorkReady Official Resource: ${filename}\n\nContents verified by WorkReady Career Mentors.\nVisit https://workready-rouge.vercel.app for full mock drills.`], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

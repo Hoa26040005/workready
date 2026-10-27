@@ -1,6 +1,10 @@
 import React, { useState } from 'react';
 import { useData } from '../context/DataContext';
-import { getFirebaseConfig, saveFirebaseConfig, initFirebase } from '../services/firebase';
+import { getFirebaseConfig, saveFirebaseConfig, initFirebase, isFirebaseConfiguredByEnv } from '../services/firebase';
+
+// Mật khẩu admin lấy từ biến môi trường VITE_ADMIN_PASSWORD (đặt trên Vercel / file .env).
+// Lưu ý: đây chỉ là lớp che chắn phía trình duyệt, không phải bảo mật thật sự.
+const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD || 'admin123';
 
 export default function AdminPanel({ onClose }) {
   const {
@@ -13,6 +17,9 @@ export default function AdminPanel({ onClose }) {
     setIsAdminAuthenticated,
     isFirebaseConnected,
     setIsFirebaseConnected,
+    loadFromCloud,
+    pushAllToCloud,
+    refreshSubmissions,
     addQuestion,
     deleteQuestion,
     addVideo,
@@ -36,9 +43,10 @@ export default function AdminPanel({ onClose }) {
 
   const handleLogin = (e) => {
     e.preventDefault();
-    if (passwordInput === 'admin123') {
+    if (passwordInput === ADMIN_PASSWORD) {
       setIsAdminAuthenticated(true);
       setAuthError('');
+      setPasswordInput('');
     } else {
       setAuthError('Mật khẩu không chính xác! Vui lòng thử lại.');
     }
@@ -71,7 +79,6 @@ export default function AdminPanel({ onClose }) {
                 autoFocus
               />
               {authError && <div className="login-error-text">{authError}</div>}
-              <div className="login-hint">💡 Gợi ý mật khẩu mặc định: <code>admin123</code></div>
 
               <div className="login-actions">
                 <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>
@@ -155,9 +162,18 @@ export default function AdminPanel({ onClose }) {
               {activeTab === 'submissions' && (
                 <SubmissionsManager
                   submissions={submissions}
-                  onUpdateFeedback={(id, feedback) => {
-                    updateSubmissionFeedback(id, feedback);
-                    triggerSuccess('Đã gửi nhận xét phản hồi cho học viên thành công!');
+                  isFirebaseConnected={isFirebaseConnected}
+                  onRefresh={async () => {
+                    const ok = await refreshSubmissions();
+                    triggerSuccess(ok ? 'Đã tải bài nộp mới nhất từ Firebase.' : 'Không tải được dữ liệu từ Firebase.');
+                  }}
+                  onUpdateFeedback={async (id, feedback) => {
+                    const synced = await updateSubmissionFeedback(id, feedback);
+                    triggerSuccess(
+                      isFirebaseConnected && !synced
+                        ? '⚠️ Đã lưu trên máy này nhưng KHÔNG đồng bộ được lên Firebase (kiểm tra Firestore Rules).'
+                        : 'Đã gửi nhận xét phản hồi cho học viên thành công!'
+                    );
                   }}
                   onDelete={(id) => {
                     deleteSubmission(id);
@@ -235,10 +251,18 @@ export default function AdminPanel({ onClose }) {
                     else triggerSuccess('Lỗi: File JSON không đúng định dạng!');
                   }}
                   isFirebaseConnected={isFirebaseConnected}
-                  onConnectFirebase={(connected) => {
+                  onConnectFirebase={async (connected) => {
                     setIsFirebaseConnected(connected);
-                    if (connected) triggerSuccess('Đã kết nối thành công với Firebase Firestore!');
-                    else triggerSuccess('Đã ngắt kết nối Firebase.');
+                    if (connected) {
+                      // Đẩy dữ liệu hiện có lên cloud rồi tải lại bản chung từ cloud
+                      await pushAllToCloud();
+                      const ok = await loadFromCloud();
+                      triggerSuccess(ok
+                        ? 'Đã kết nối và đồng bộ dữ liệu với Firebase Firestore!'
+                        : '⚠️ Đã lưu cấu hình nhưng không đọc được Firestore. Kiểm tra lại cấu hình / Firestore Rules.');
+                    } else {
+                      triggerSuccess('Đã ngắt kết nối Firebase.');
+                    }
                   }}
                 />
               )}
@@ -271,7 +295,7 @@ export default function AdminPanel({ onClose }) {
 // ==========================================
 // 1. SUBMISSIONS & FEEDBACKS MANAGER
 // ==========================================
-function SubmissionsManager({ submissions, onUpdateFeedback, onDelete }) {
+function SubmissionsManager({ submissions, isFirebaseConnected, onRefresh, onUpdateFeedback, onDelete }) {
   const [feedbackDrafts, setFeedbackDrafts] = useState({});
 
   const handleDraftChange = (id, val) => {
@@ -292,6 +316,15 @@ function SubmissionsManager({ submissions, onUpdateFeedback, onDelete }) {
         <p>
           Học viên gửi câu trả lời phỏng vấn từ mục <em>Put Your Skills into Practice</em> sẽ lập tức xuất hiện tại đây để bạn chấm điểm và gửi phản hồi nhận xét trực tiếp.
         </p>
+        {isFirebaseConnected ? (
+          <button className="btn btn-sm btn-dark" onClick={onRefresh} style={{ marginTop: '8px' }}>
+            🔄 Tải bài nộp mới nhất
+          </button>
+        ) : (
+          <p style={{ marginTop: '8px', color: '#b45309', fontWeight: 600 }}>
+            ⚠️ Chưa kết nối Firebase: bạn chỉ thấy bài nộp được gửi từ chính trình duyệt này.
+          </p>
+        )}
       </div>
 
       <div className="admin-items-list">
@@ -703,10 +736,22 @@ function QuizzesManager({ quizzes, onAdd, onDelete }) {
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!question.trim() || !optA.trim() || !optB.trim()) return;
+
+    // Giữ đúng vị trí đáp án sau khi bỏ các ô trống
+    // (VD: điền A, B, D mà bỏ trống C thì D phải vẫn là đáp án đúng nếu được chọn)
+    const raw = [optA, optB, optC, optD].map((o) => o.trim());
+    const chosen = Number(answerIndex);
+    if (!raw[chosen]) {
+      alert(`Đáp án đúng bạn chọn (${String.fromCharCode(65 + chosen)}) đang để trống. Vui lòng điền nội dung hoặc chọn đáp án khác.`);
+      return;
+    }
+    const options = raw.filter(Boolean);
+    const mappedAnswerIndex = raw.slice(0, chosen).filter(Boolean).length;
+
     onAdd({
-      question,
-      options: [optA, optB, optC, optD].filter(Boolean),
-      answerIndex: Number(answerIndex),
+      question: question.trim(),
+      options,
+      answerIndex: mappedAnswerIndex,
       explanation: explanation || 'Đáp án chính xác theo tiêu chuẩn phỏng vấn hiện đại.'
     });
     setQuestion('');
@@ -714,6 +759,7 @@ function QuizzesManager({ quizzes, onAdd, onDelete }) {
     setOptB('');
     setOptC('');
     setOptD('');
+    setAnswerIndex(0);
     setExplanation('');
   };
 
@@ -944,7 +990,7 @@ function CloudBackupManager({ onExport, onImport, isFirebaseConnected, onConnect
         </div>
 
         <p style={{ fontSize: '0.88rem', color: '#64748b', marginBottom: '16px', lineHeight: 1.5 }}>
-          Để học viên và admin ở các máy tính khác nhau cùng thấy chung bài tập và bài nộp, bạn chỉ cần dán cấu hình Firebase Project (miễn phí) vào đây:
+          Để học viên và admin ở các máy tính khác nhau cùng thấy chung bài tập và bài nộp, Firebase cần được cấu hình trong biến môi trường của website (Vercel). Ô nhập bên dưới chỉ áp dụng cho trình duyệt hiện tại:
         </p>
 
         {configStatus && (
@@ -953,6 +999,11 @@ function CloudBackupManager({ onExport, onImport, isFirebaseConnected, onConnect
           </div>
         )}
 
+        {isFirebaseConfiguredByEnv() ? (
+          <p style={{ fontSize: '0.88rem', color: '#166534', fontWeight: 600 }}>
+            ✅ Firebase đã được cấu hình sẵn cho toàn bộ website (qua biến môi trường). Mọi học viên và admin đều dùng chung dữ liệu.
+          </p>
+        ) : (
         <form onSubmit={handleSaveFirebase} className="admin-form-grid">
           <div className="form-group">
             <label>Firebase API Key *</label>
@@ -1007,10 +1058,11 @@ function CloudBackupManager({ onExport, onImport, isFirebaseConnected, onConnect
               </button>
             )}
             <button type="submit" className="btn btn-primary btn-sm">
-              Lưu Cấu Hình & Kết Nối Firebase
+              Lưu Cấu Hình &amp; Kết Nối Firebase
             </button>
           </div>
         </form>
+        )}
       </div>
     </div>
   );

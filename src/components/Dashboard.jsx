@@ -5,7 +5,7 @@ export default function Dashboard() {
   const { tasks, toggleTask, videos, quizzes } = useData();
 
   const completedCount = tasks.filter((t) => t.completed).length;
-  const progressPercent = tasks.length > 0 ? Math.round((completedCount / tasks.length) * 100) : 85;
+  const progressPercent = tasks.length > 0 ? Math.round((completedCount / tasks.length) * 100) : 0;
 
   return (
     <section className="dashboard-section" id="dashboard">

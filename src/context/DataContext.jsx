@@ -1,14 +1,24 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { 
-  initFirebase, 
-  getFirebaseConfig, 
-  saveFirebaseConfig,
-  syncQuestionToFirebase, 
-  fetchQuestionsFromFirebase,
-  syncSubmissionToFirebase, 
-  fetchSubmissionsFromFirebase, 
-  updateSubmissionInFirebase 
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import {
+  initFirebase,
+  upsertItem,
+  upsertMany,
+  deleteItem,
+  fetchCollection
 } from '../services/firebase';
+
+// Đọc localStorage an toàn: dữ liệu hỏng sẽ không làm sập cả trang
+function loadLocal(key, fallback) {
+  try {
+    const saved = localStorage.getItem(key);
+    if (!saved) return fallback;
+    const parsed = JSON.parse(saved);
+    return parsed ?? fallback;
+  } catch (e) {
+    console.warn(`Dữ liệu "${key}" trong localStorage bị lỗi, dùng dữ liệu mặc định.`, e);
+    return fallback;
+  }
+}
 
 const DEFAULT_QUESTIONS = [
   {
@@ -171,75 +181,67 @@ const DEFAULT_SUBMISSIONS = [
 
 const DataContext = createContext();
 
+// Các collection nội dung do admin quản lý (dùng chung cho mọi học viên)
+const CONTENT_COLLECTIONS = ['questions', 'videos', 'tasks', 'quizzes'];
+
 export function DataProvider({ children }) {
-  const [questions, setQuestions] = useState(() => {
-    const saved = localStorage.getItem('workready_questions');
-    return saved ? JSON.parse(saved) : DEFAULT_QUESTIONS;
-  });
-
-  const [videos, setVideos] = useState(() => {
-    const saved = localStorage.getItem('workready_videos');
-    return saved ? JSON.parse(saved) : DEFAULT_VIDEOS;
-  });
-
-  const [tasks, setTasks] = useState(() => {
-    const saved = localStorage.getItem('workready_tasks');
-    return saved ? JSON.parse(saved) : DEFAULT_TASKS;
-  });
-
-  const [quizzes, setQuizzes] = useState(() => {
-    const saved = localStorage.getItem('workready_quizzes');
-    return saved ? JSON.parse(saved) : DEFAULT_QUIZZES;
-  });
-
-  const [submissions, setSubmissions] = useState(() => {
-    const saved = localStorage.getItem('workready_submissions');
-    return saved ? JSON.parse(saved) : DEFAULT_SUBMISSIONS;
-  });
+  const [questions, setQuestions] = useState(() => loadLocal('workready_questions', DEFAULT_QUESTIONS));
+  const [videos, setVideos] = useState(() => loadLocal('workready_videos', DEFAULT_VIDEOS));
+  // Danh sách nhiệm vụ (định nghĩa do admin giao)
+  const [taskDefs, setTaskDefs] = useState(() =>
+    loadLocal('workready_tasks', DEFAULT_TASKS).map(({ completed, ...rest }) => rest) // eslint-disable-line no-unused-vars
+  );
+  // Tiến độ hoàn thành nhiệm vụ: riêng cho từng học viên (trình duyệt), KHÔNG đẩy lên cloud
+  const [taskProgress, setTaskProgress] = useState(() => loadLocal('workready_task_progress', {}));
+  const [quizzes, setQuizzes] = useState(() => loadLocal('workready_quizzes', DEFAULT_QUIZZES));
+  const [submissions, setSubmissions] = useState(() => loadLocal('workready_submissions', DEFAULT_SUBMISSIONS));
+  // ID các bài nộp do chính trình duyệt này gửi (để học viên xem lại nhận xét của giảng viên)
+  const [mySubmissionIds, setMySubmissionIds] = useState(() => loadLocal('workready_my_submissions', []));
 
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [isFirebaseConnected, setIsFirebaseConnected] = useState(false);
 
+  const tasks = taskDefs.map((t) => ({ ...t, completed: Boolean(taskProgress[t.id]) }));
+
+  const setters = {
+    questions: setQuestions,
+    videos: setVideos,
+    tasks: setTaskDefs,
+    quizzes: setQuizzes
+  };
+
+  // Tải dữ liệu từ Firebase. Collection nào trên cloud còn trống thì giữ dữ liệu cục bộ.
+  const loadFromCloud = useCallback(async () => {
+    const results = await Promise.all([
+      ...CONTENT_COLLECTIONS.map((name) => fetchCollection(name)),
+      fetchCollection('submissions', true)
+    ]);
+    CONTENT_COLLECTIONS.forEach((name, i) => {
+      const list = results[i];
+      if (list && list.length > 0) setters[name](list);
+    });
+    const cloudSubs = results[CONTENT_COLLECTIONS.length];
+    if (cloudSubs) setSubmissions(cloudSubs);
+    return results.every((r) => r !== null);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Khởi tạo và kiểm tra kết nối Firebase khi khởi động
   useEffect(() => {
-    const dbInstance = initFirebase();
-    if (dbInstance) {
+    if (initFirebase()) {
       setIsFirebaseConnected(true);
-      // Đồng bộ bài nộp và câu hỏi từ Firebase nếu có
-      fetchSubmissionsFromFirebase().then((cloudSubs) => {
-        if (cloudSubs && cloudSubs.length > 0) {
-          setSubmissions(cloudSubs);
-        }
-      });
-      fetchQuestionsFromFirebase().then((cloudQuestions) => {
-        if (cloudQuestions && cloudQuestions.length > 0) {
-          setQuestions(cloudQuestions);
-        }
-      });
+      loadFromCloud();
     }
-  }, []);
+  }, [loadFromCloud]);
 
   // Sync with localStorage
-  useEffect(() => {
-    localStorage.setItem('workready_questions', JSON.stringify(questions));
-  }, [questions]);
-
-  useEffect(() => {
-    localStorage.setItem('workready_videos', JSON.stringify(videos));
-  }, [videos]);
-
-  useEffect(() => {
-    localStorage.setItem('workready_tasks', JSON.stringify(tasks));
-  }, [tasks]);
-
-  useEffect(() => {
-    localStorage.setItem('workready_quizzes', JSON.stringify(quizzes));
-  }, [quizzes]);
-
-  useEffect(() => {
-    localStorage.setItem('workready_submissions', JSON.stringify(submissions));
-  }, [submissions]);
+  useEffect(() => { localStorage.setItem('workready_questions', JSON.stringify(questions)); }, [questions]);
+  useEffect(() => { localStorage.setItem('workready_videos', JSON.stringify(videos)); }, [videos]);
+  useEffect(() => { localStorage.setItem('workready_tasks', JSON.stringify(taskDefs)); }, [taskDefs]);
+  useEffect(() => { localStorage.setItem('workready_task_progress', JSON.stringify(taskProgress)); }, [taskProgress]);
+  useEffect(() => { localStorage.setItem('workready_quizzes', JSON.stringify(quizzes)); }, [quizzes]);
+  useEffect(() => { localStorage.setItem('workready_submissions', JSON.stringify(submissions)); }, [submissions]);
+  useEffect(() => { localStorage.setItem('workready_my_submissions', JSON.stringify(mySubmissionIds)); }, [mySubmissionIds]);
 
   // Global Keyboard Shortcut: Ctrl + Shift + A (hoặc Cmd + Shift + A)
   useEffect(() => {
@@ -253,60 +255,81 @@ export function DataProvider({ children }) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Helper: chỉ gọi cloud khi đã kết nối
+  const cloud = (fn) => {
+    if (isFirebaseConnected) return fn();
+    return Promise.resolve(false);
+  };
+
   // Questions Actions
-  const addQuestion = async (newQ) => {
+  const addQuestion = (newQ) => {
     const item = { ...newQ, id: Date.now() };
-    setQuestions((prev) => [item, ...prev]);
-    // Đồng bộ lên Firebase nếu kết nối
-    if (isFirebaseConnected) {
-      await syncQuestionToFirebase(item);
-    }
+    setQuestions((prev) => [...prev, item]);
+    return cloud(() => upsertItem('questions', item));
   };
 
   const updateQuestion = (id, updated) => {
+    const current = questions.find((q) => q.id === id);
     setQuestions((prev) => prev.map((q) => (q.id === id ? { ...q, ...updated } : q)));
+    if (current) return cloud(() => upsertItem('questions', { ...current, ...updated }));
   };
 
   const deleteQuestion = (id) => {
     setQuestions((prev) => prev.filter((q) => q.id !== id));
+    return cloud(() => deleteItem('questions', id));
   };
 
   // Videos Actions
   const addVideo = (newV) => {
     const item = { ...newV, id: Date.now() };
     setVideos((prev) => [...prev, item]);
+    return cloud(() => upsertItem('videos', item));
   };
 
   const updateVideo = (id, updated) => {
+    const current = videos.find((v) => v.id === id);
     setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...updated } : v)));
+    if (current) return cloud(() => upsertItem('videos', { ...current, ...updated }));
   };
 
   const deleteVideo = (id) => {
     setVideos((prev) => prev.filter((v) => v.id !== id));
+    return cloud(() => deleteItem('videos', id));
   };
 
   // Tasks Actions
   const addTask = (newT) => {
-    const item = { ...newT, id: Date.now(), completed: false };
-    setTasks((prev) => [...prev, item]);
+    // eslint-disable-next-line no-unused-vars
+    const { completed, ...rest } = newT;
+    const item = { ...rest, id: Date.now() };
+    setTaskDefs((prev) => [...prev, item]);
+    return cloud(() => upsertItem('tasks', item));
   };
 
   const toggleTask = (id) => {
-    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t)));
+    setTaskProgress((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
   const deleteTask = (id) => {
-    setTasks((prev) => prev.filter((t) => t.id !== id));
+    setTaskDefs((prev) => prev.filter((t) => t.id !== id));
+    setTaskProgress((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    return cloud(() => deleteItem('tasks', id));
   };
 
   // Quiz Actions
   const addQuiz = (newQz) => {
     const item = { ...newQz, id: Date.now() };
     setQuizzes((prev) => [...prev, item]);
+    return cloud(() => upsertItem('quizzes', item));
   };
 
   const deleteQuiz = (id) => {
     setQuizzes((prev) => prev.filter((qz) => qz.id !== id));
+    return cloud(() => deleteItem('quizzes', id));
   };
 
   // Submissions & Feedbacks Actions
@@ -321,28 +344,43 @@ export function DataProvider({ children }) {
       adminFeedback: ''
     };
     setSubmissions((prev) => [item, ...prev]);
+    setMySubmissionIds((prev) => [item.id, ...prev]);
 
-    // Lưu bài tập lên Firebase
-    if (isFirebaseConnected) {
-      const cloudId = await syncSubmissionToFirebase(item);
-      if (cloudId) {
-        console.log('Submission synced to Firebase Firestore with ID:', cloudId);
-      }
-    }
+    // Lưu bài nộp lên Firebase để admin ở máy khác cũng thấy
+    return cloud(() => upsertItem('submissions', item));
   };
 
-  const updateSubmissionFeedback = async (id, adminFeedback) => {
+  const updateSubmissionFeedback = (id, adminFeedback) => {
     setSubmissions((prev) =>
       prev.map((s) => (s.id === id ? { ...s, adminFeedback, status: 'Reviewed' } : s))
     );
-
-    if (isFirebaseConnected) {
-      await updateSubmissionInFirebase(id, adminFeedback);
-    }
+    return cloud(() => upsertItem('submissions', { id, adminFeedback, status: 'Reviewed' }));
   };
 
   const deleteSubmission = (id) => {
     setSubmissions((prev) => prev.filter((s) => s.id !== id));
+    return cloud(() => deleteItem('submissions', id));
+  };
+
+  // Tải lại bài nộp mới nhất từ cloud (admin xem bài mới / học viên xem nhận xét mới)
+  const refreshSubmissions = async () => {
+    if (!isFirebaseConnected) return false;
+    const cloudSubs = await fetchCollection('submissions', true);
+    if (cloudSubs) setSubmissions(cloudSubs);
+    return Boolean(cloudSubs);
+  };
+
+  // Đẩy toàn bộ dữ liệu cục bộ của admin lên cloud (dùng khi vừa kết nối Firebase)
+  const pushAllToCloud = async () => {
+    if (!initFirebase()) return false;
+    await Promise.all([
+      upsertMany('questions', questions),
+      upsertMany('videos', videos),
+      upsertMany('tasks', taskDefs),
+      upsertMany('quizzes', quizzes),
+      upsertMany('submissions', submissions)
+    ]);
+    return true;
   };
 
   // ==========================================
@@ -350,32 +388,49 @@ export function DataProvider({ children }) {
   // ==========================================
   const exportAllData = () => {
     const backupData = {
-      version: '1.0',
+      version: '1.1',
       exportedAt: new Date().toISOString(),
       questions,
       videos,
-      tasks,
+      tasks: taskDefs,
       quizzes,
       submissions
     };
 
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(backupData, null, 2));
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
     const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `workready-backup-${new Date().toISOString().slice(0, 10)}.json`);
+    downloadAnchor.href = url;
+    downloadAnchor.download = `workready-backup-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
+    URL.revokeObjectURL(url);
   };
 
   const importAllData = (jsonData) => {
     try {
       const parsed = typeof jsonData === 'string' ? JSON.parse(jsonData) : jsonData;
-      if (parsed.questions && Array.isArray(parsed.questions)) setQuestions(parsed.questions);
-      if (parsed.videos && Array.isArray(parsed.videos)) setVideos(parsed.videos);
-      if (parsed.tasks && Array.isArray(parsed.tasks)) setTasks(parsed.tasks);
-      if (parsed.quizzes && Array.isArray(parsed.quizzes)) setQuizzes(parsed.quizzes);
-      if (parsed.submissions && Array.isArray(parsed.submissions)) setSubmissions(parsed.submissions);
+      if (!parsed || typeof parsed !== 'object') return false;
+
+      const keys = ['questions', 'videos', 'tasks', 'quizzes', 'submissions'];
+      const valid = keys.filter((k) => Array.isArray(parsed[k]));
+      if (valid.length === 0) return false;
+
+      if (Array.isArray(parsed.questions)) setQuestions(parsed.questions);
+      if (Array.isArray(parsed.videos)) setVideos(parsed.videos);
+      if (Array.isArray(parsed.tasks)) {
+        setTaskDefs(parsed.tasks.map(({ completed, ...rest }) => rest)); // eslint-disable-line no-unused-vars
+      }
+      if (Array.isArray(parsed.quizzes)) setQuizzes(parsed.quizzes);
+      if (Array.isArray(parsed.submissions)) setSubmissions(parsed.submissions);
+
+      // Đồng bộ dữ liệu vừa nhập lên cloud
+      cloud(() =>
+        Promise.all(valid.map((k) => upsertMany(k, k === 'tasks'
+          ? parsed.tasks.map(({ completed, ...rest }) => rest) // eslint-disable-line no-unused-vars
+          : parsed[k])))
+      );
       return true;
     } catch (e) {
       console.error('Lỗi nhập dữ liệu JSON:', e);
@@ -383,18 +438,14 @@ export function DataProvider({ children }) {
     }
   };
 
-  // Reset to default mock data
+  // Reset to default mock data (chỉ trên trình duyệt này)
   const resetAllData = () => {
     setQuestions(DEFAULT_QUESTIONS);
     setVideos(DEFAULT_VIDEOS);
-    setTasks(DEFAULT_TASKS);
+    setTaskDefs(DEFAULT_TASKS);
+    setTaskProgress({});
     setQuizzes(DEFAULT_QUIZZES);
     setSubmissions(DEFAULT_SUBMISSIONS);
-    localStorage.removeItem('workready_questions');
-    localStorage.removeItem('workready_videos');
-    localStorage.removeItem('workready_tasks');
-    localStorage.removeItem('workready_quizzes');
-    localStorage.removeItem('workready_submissions');
   };
 
   return (
@@ -405,12 +456,16 @@ export function DataProvider({ children }) {
         tasks,
         quizzes,
         submissions,
+        mySubmissionIds,
         isAdminOpen,
         setIsAdminOpen,
         isAdminAuthenticated,
         setIsAdminAuthenticated,
         isFirebaseConnected,
         setIsFirebaseConnected,
+        loadFromCloud,
+        pushAllToCloud,
+        refreshSubmissions,
         addQuestion,
         updateQuestion,
         deleteQuestion,
