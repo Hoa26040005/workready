@@ -7,6 +7,21 @@ import {
   fetchCollection
 } from '../services/firebase';
 
+const CURRENT_CONTENT_VERSION = '2026-11-01-v2';
+
+// Tự động cập nhật nội dung mới nếu trình duyệt đang lưu bản mẫu cũ
+try {
+  if (localStorage.getItem('workready_content_version') !== CURRENT_CONTENT_VERSION) {
+    localStorage.removeItem('workready_questions');
+    localStorage.removeItem('workready_videos');
+    localStorage.removeItem('workready_tasks');
+    localStorage.removeItem('workready_quizzes');
+    localStorage.setItem('workready_content_version', CURRENT_CONTENT_VERSION);
+  }
+} catch (e) {
+  console.warn('Không thể kiểm tra phiên bản localStorage:', e);
+}
+
 // Đọc localStorage an toàn: dữ liệu hỏng sẽ không làm sập cả trang
 function loadLocal(key, fallback) {
   try {
@@ -23,32 +38,32 @@ function loadLocal(key, fallback) {
 const DEFAULT_QUESTIONS = [
   {
     id: 1,
-    title: 'Tell me about yourself',
-    body: 'Start with your current role or university studies, highlight 1-2 key achievements, mention core relevant skills, and tie it directly back to why you are excited about this position. Avoid reciting your entire resume chronologically.',
+    title: 'Tell me about yourself.',
+    body: 'Structure: Introduction (name & current studies) → Skills & experience (university projects/activities) → Career goal. Sample: "Hello, my name is Anna. I am a third-year English major at HUFLIT. During my studies, I have developed my teamwork, presentation, and problem-solving skills through group projects and class activities. I hope to gain practical experience and improve my professional skills through this opportunity."',
     category: 'General'
   },
   {
     id: 2,
-    title: 'Why do you want to work at this company?',
-    body: 'Demonstrate thorough company research. Mention specific initiatives, products, or core values that resonate with you, and explain clearly how your background equips you to contribute immediately to their mission.',
-    category: 'Motivation'
+    title: 'What are your strengths?',
+    body: 'Structure: Strength → Example → Job relevance. Sample: "One of my main strengths is that I am a quick learner. For example, during a group project at university, I had to use a new presentation tool. I learned how to use it and helped my team prepare our presentation. I believe this strength will help me adapt to a new working environment."',
+    category: 'Self-Awareness'
   },
   {
     id: 3,
-    title: 'What are your greatest strengths and weaknesses?',
-    body: 'Align your strength directly with the job description backed by a tangible metric or project. For weaknesses, state a genuine growth area and showcase the concrete steps you are actively taking to overcome it.',
+    title: 'What is your greatest weakness?',
+    body: 'Structure: Weakness → Action → Improvement. Sample: "One area I am working on is my public speaking. Sometimes, I feel nervous when speaking in front of a large audience. To improve, I have started volunteering to present in class and practicing before each presentation. I have become more confident over time, and I will continue working on this skill."',
     category: 'Self-Awareness'
   },
   {
     id: 4,
-    title: 'Can you tell me about a time you solved a difficult problem?',
-    body: 'Leverage the STAR format (Situation, Task, Action, Result). Highlight your analytical thinking, individual action steps taken, and measurable impact on the outcome.',
-    category: 'Behavioral'
+    title: 'Why should we hire you?',
+    body: 'Structure: Relevant qualities → Evidence → Contribution. Sample: "I believe I would be a good fit for this position because I am responsible, adaptable, and eager to learn. Although I do not have much professional experience yet, I have developed communication and teamwork skills through university projects. If given this opportunity, I will do my best to contribute to the team and grow with the company."',
+    category: 'Motivation'
   },
   {
     id: 5,
     title: 'Where do you see yourself in five years?',
-    body: 'Show sustained commitment and realistic career progression. Discuss technical mastery, growing into cross-functional leadership, and delivering long-term value to the team.',
+    body: 'Structure: Career goal → Development plan → Future contribution. Sample: "In five years, I hope to become a skilled professional in my chosen field. First, I want to gain practical experience, improve my communication skills, and learn from experienced colleagues. As I gain more knowledge, I hope to take on greater responsibilities and contribute to important projects."',
     category: 'Career Vision'
   }
 ];
@@ -56,65 +71,65 @@ const DEFAULT_QUESTIONS = [
 const DEFAULT_VIDEOS = [
   {
     id: 1,
-    title: 'The 60-Second Elevator Pitch Mastery',
-    duration: '03:45',
-    instructor: 'Sarah Jenkins (Ex-Google Recruiter)',
-    videoUrl: 'https://www.youtube.com/watch?v=lykn5VghqH4',
-    summary: 'Structure an unforgettable 1-minute intro that hooks interviewers.'
+    title: '1. How to Introduce Yourself in an English Job Interview',
+    duration: 'Video Lesson',
+    instructor: 'Khải — WorkReady Team',
+    videoUrl: 'https://m.youtube.com/watch?si=y28baFVA2kcg6Q7a&v=R7CF-ER0dBA&feature=youtu.be',
+    summary: 'Step-by-step guide on how to introduce yourself clearly, professionally, and confidently in an English job interview.'
   },
   {
     id: 2,
-    title: 'Structuring STAR Responses for Tech Roles',
-    duration: '04:12',
-    instructor: 'David Nguyen (Senior Engineering Lead)',
-    videoUrl: 'https://www.youtube.com/watch?v=11XpW5o2h8Q',
-    summary: 'Deliver crisp, metric-driven answers without rambling.'
+    title: '2. How to answer “Tell me about Yourself”',
+    duration: 'Video Lesson',
+    instructor: 'Quyên Thái — WorkReady Team',
+    videoUrl: 'https://youtu.be/hzpYGFu7-0Y',
+    summary: 'Structure your self-introduction effectively: State your name & current studies, highlight relevant skills, and share your career goals.'
   },
   {
     id: 3,
-    title: 'Handling Salary Negotiation Questions Confidently',
-    duration: '05:00',
-    instructor: 'Emily Watson (Career Coach)',
-    videoUrl: 'https://www.youtube.com/watch?v=0k5mU6E1JkM',
-    summary: 'Benchmark your market value and handle early salary screeners.'
+    title: '3. How to talk about your strengths and Weaknesses',
+    duration: 'Short Lesson',
+    instructor: 'Quyên Thái — WorkReady Team',
+    videoUrl: 'https://youtube.com/shorts/I5d-sS7S5p4',
+    summary: 'Use Strength → Example → Job relevance for your strengths, and Weakness → Action → Improvement for areas you are developing.'
   },
   {
     id: 4,
-    title: 'Asking Insightful Questions at the End of the Interview',
-    duration: '03:30',
-    instructor: 'Marcus Vance (VP of Talent)',
-    videoUrl: 'https://www.youtube.com/watch?v=x-7iW4W8GvY',
-    summary: 'Stand out by interviewing the interviewer with high-caliber questions.'
+    title: '5. Professional Body Language and Common Interview Mistakes',
+    duration: 'Short Lesson',
+    instructor: 'Quyên Thái — WorkReady Team',
+    videoUrl: 'https://youtube.com/shorts/NLOMBUoOiJw',
+    summary: 'Master positive non-verbal communication (posture, natural eye contact, calm pacing) and avoid common interview mistakes.'
   }
 ];
 
 const DEFAULT_TASKS = [
   {
     id: 1,
-    title: 'Complete 1 STAR interview drill',
+    title: 'Watch the 4 interview instructional videos',
+    category: 'Video',
+    points: 40,
+    completed: true
+  },
+  {
+    id: 2,
+    title: 'Read the HUFLIT Interview Guide & Sample Answers PDF',
     category: 'Practice',
     points: 50,
     completed: true
   },
   {
-    id: 2,
-    title: 'Watch the Elevator Pitch instructional video',
-    category: 'Video',
-    points: 30,
-    completed: true
-  },
-  {
     id: 3,
-    title: 'Score 80%+ on Career Readiness Quiz',
-    category: 'Assessment',
-    points: 60,
+    title: 'Practice with Gemini Flashcards & Vocabulary Drills',
+    category: 'Vocabulary',
+    points: 40,
     completed: false
   },
   {
     id: 4,
-    title: 'Review 5 terminology flashcards with pronunciation',
-    category: 'Vocabulary',
-    points: 25,
+    title: 'Score 80%+ on the Career Readiness Quiz',
+    category: 'Assessment',
+    points: 60,
     completed: false
   }
 ];
@@ -122,13 +137,34 @@ const DEFAULT_TASKS = [
 const DEFAULT_QUIZZES = [
   {
     id: 1,
+    question: 'Which term refers to a document detailing the responsibilities, reporting lines, and requirements of an open position?',
+    options: ['Candidate profile', 'Job Description', 'Recruitment flyer', 'Interview schedule'],
+    answerIndex: 1,
+    explanation: 'A Job Description sets out the duties, responsibilities, and qualifications required for a position.'
+  },
+  {
+    id: 2,
+    question: 'When a company invites shortlisted applicants to participate in role-plays, group discussions, and psychometric tests over a full day, they are likely using a(n):',
+    options: ['Assessment Center', 'Online quiz', 'Casual chat', 'Exit interview'],
+    answerIndex: 0,
+    explanation: 'An Assessment Center uses practical tasks, such as role-plays and group discussions, to evaluate candidates under pressure and in teamwork.'
+  },
+  {
+    id: 3,
+    question: 'If you are the person responsible for sourcing, interviewing, and hiring new talents for your company, what is your professional title?',
+    options: ['Job applicant', 'Recruiter', 'Intern', 'Candidate'],
+    answerIndex: 1,
+    explanation: 'A Recruiter is a professional whose job is to find, interview, and select new talent for an organization.'
+  },
+  {
+    id: 4,
     question: 'What does the letter "A" in the STAR interview framework stand for?',
     options: ['Approach', 'Action', 'Ambition', 'Analysis'],
     answerIndex: 1,
     explanation: '"Action" represents the specific steps and contributions you individually made to solve the challenge.'
   },
   {
-    id: 2,
+    id: 5,
     question: 'When asked "What is your greatest weakness?", what is the most strategic approach?',
     options: [
       'Say you have no weaknesses because you are a perfectionist.',
@@ -137,11 +173,11 @@ const DEFAULT_QUIZZES = [
       'Refuse to answer the question as it is a trick.'
     ],
     answerIndex: 1,
-    explanation: 'Interviewers look for self-awareness, maturity, and a proactive continuous-learning mindset.'
+    explanation: 'Use the Weakness → Action → Improvement structure to show self-awareness and willingness to learn.'
   },
   {
-    id: 3,
-    question: 'When is the optimal time to send a post-interview thank you email?',
+    id: 6,
+    question: 'When is the optimal time to send a post-interview thank-you email?',
     options: [
       'Within 24 hours of completing the interview.',
       'At least two weeks later to not seem desperate.',
@@ -149,19 +185,7 @@ const DEFAULT_QUIZZES = [
       'Only after you have received an offer.'
     ],
     answerIndex: 0,
-    explanation: 'Sending a tailored thank-you note within 24 hours reinforces your enthusiasm and keeps you top-of-mind.'
-  },
-  {
-    id: 4,
-    question: 'In an elevator pitch, what should you avoid doing?',
-    options: [
-      'Highlighting your primary technical focus.',
-      'Reciting your entire resume chronologically from school to present.',
-      'Mentioning a quantifiable achievement.',
-      'Explaining why you are interested in this specific role.'
-    ],
-    answerIndex: 1,
-    explanation: 'An elevator pitch must be crisp (30-60s), forward-looking, and focused on value proposition, not your full CV.'
+    explanation: 'Sending a short thank-you email within 24 hours reinforces your enthusiasm and professionalism.'
   }
 ];
 

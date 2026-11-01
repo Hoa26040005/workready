@@ -125,7 +125,9 @@ export default function PracticeSection({ onNotify }) {
                         <p>
                           <strong>Sample Answer Framework:</strong> {q.body}
                         </p>
-                        <a href="#practice" className="breakdown-link">Read full answer breakdown & tips →</a>
+                        <a href="/pdfs/Sample_Interview_Answers.pdf" target="_blank" rel="noopener noreferrer" className="breakdown-link">
+                          Read full answer breakdown &amp; tips (PDF) →
+                        </a>
                       </div>
                     )}
                   </div>
